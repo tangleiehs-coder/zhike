@@ -12,6 +12,7 @@ const SYSTEM_PROMPT = `你是“知课”企业内训课程设计助手。你帮
 7. 知识包装分两层：先识别并列、顺序、对比、层级、因果、二维交叉、空间组成等关系，再选择清单、表格、流程、模型、矩阵、示意图、口诀、决策树或检查表等形式。
 8. 不编造企业制度、法规条文、事故数据和操作标准。资料不足时明确标为待核实。
 9. PPT逐页方案必须包括页面类型、标题、全部屏上文字、视觉构图、讲师提示、学员行为和时间；页面类型覆盖封面、目录、章封面（完整目录中突出当前章）、小节封面、激活、讲解、吸收·思考、吸收·练习、吸收·实践、总结和收尾。
+10. 严格按步骤工作。本次只完成action指定的一步，以上一步经用户确认或修改后的内容为依据，不提前重写后续步骤，也不擅自推翻用户已经修改的文字。
 
 根据action只输出JSON，不要输出Markdown或解释。字段必须与请求所需的结构一致。`;
 
@@ -26,6 +27,7 @@ type LooseCourse = {
   modules?: Array<Record<string, unknown>>;
   activities?: unknown[];
   attachments?: Array<Record<string, unknown>>;
+  messages?: Array<Record<string, unknown>>;
 };
 
 type RuntimeConfig = {
@@ -167,6 +169,7 @@ function buildStoryboard(course: LooseCourse) {
   ];
 
   modules.forEach((module, index) => {
+    const moduleId = clean(module.id) || `module-${index + 1}`;
     const title = String(module.title || `模块${index + 1}`);
     const question = String(module.question || "这一章要解决什么关键问题？");
     const contents = stringList(module.contents, ["关键概念", "判断标准", "行动方法"]).slice(0, 4);
@@ -178,6 +181,7 @@ function buildStoryboard(course: LooseCourse) {
 
     slides.push(
       {
+        moduleId,
         type: "章封面",
         stage: "过渡",
         title,
@@ -188,6 +192,7 @@ function buildStoryboard(course: LooseCourse) {
         time: 1,
       },
       {
+        moduleId,
         type: "小节封面",
         stage: "过渡",
         title: question,
@@ -198,6 +203,7 @@ function buildStoryboard(course: LooseCourse) {
         time: 1,
       },
       {
+        moduleId,
         type: "激活",
         stage: "激活",
         title: "先判断：你会怎么做？",
@@ -208,6 +214,7 @@ function buildStoryboard(course: LooseCourse) {
         time: 5,
       },
       {
+        moduleId,
         type: "讲解",
         stage: "讲解",
         title: `${title}：抓住这些要点`,
@@ -218,6 +225,7 @@ function buildStoryboard(course: LooseCourse) {
         time: Number(module.time || 20) > 35 ? 10 : 7,
       },
       {
+        moduleId,
         type: absorbType,
         stage: "吸收",
         title: `完成产出：${output}`,
@@ -256,24 +264,69 @@ function buildStoryboard(course: LooseCourse) {
   return { slides: slides.map((slide, index) => ({ ...slide, id: `slide-${index + 1}` })) };
 }
 
-function mockResponse(action: string, course: LooseCourse, message: string) {
+function storyboardSection(course: LooseCourse, moduleId: string) {
+  const allSlides = buildStoryboard(course).slides;
+  const selected = allSlides.filter((slide) => clean(slide.moduleId) === moduleId);
+  return { slides: selected.length ? selected : allSlides.filter((slide) => Boolean(slide.moduleId)).slice(0, 5) };
+}
+
+function mockResponse(action: string, course: LooseCourse, message: string, moduleId = "") {
   if (action === "intake") return mockIntake(course, message);
   if (action === "goals") return mockGoals(course);
   if (action === "outline") return mockOutline(course);
   if (action === "activities") return mockActivities(course);
   if (action === "storyboard") return buildStoryboard(course);
+  if (action === "storyboard-section") return storyboardSection(course, moduleId);
   return { error: "未知生成任务" };
 }
 
-function compactCourse(course: LooseCourse) {
-  return {
-    ...course,
-    attachments: (course.attachments || []).map((file) => ({
-      name: file.name,
-      type: file.type,
-      text: typeof file.text === "string" ? file.text.slice(0, 12000) : undefined,
-    })),
+function attachmentContext(course: LooseCourse) {
+  let remaining = 24000;
+  return (course.attachments || []).slice(0, 6).map((file) => {
+    const source = typeof file.text === "string" ? file.text.trim() : "";
+    const text = source.slice(0, Math.min(8000, remaining));
+    remaining -= text.length;
+    return { name: clean(file.name), type: clean(file.type), text: text || undefined };
+  });
+}
+
+function stageContext(action: string, course: LooseCourse, message: string, moduleId: string) {
+  const common = {
+    rawTask: clean(course.rawTask),
+    brief: course.brief || {},
+    courseType: clean(course.courseType),
+    mainline: clean(course.mainline),
   };
+  if (action === "intake") return {
+    ...common,
+    message,
+    recentConversation: (course.messages || []).slice(-6).map((item) => ({ role: clean(item.role), text: clean(item.text).slice(0, 1000) })),
+    attachmentNames: (course.attachments || []).slice(0, 10).map((file) => clean(file.name)).filter(Boolean),
+  };
+  if (action === "goals") return {
+    ...common,
+    landing: course.landing || [],
+    outcomeNote: clean(course.outcomeNote),
+  };
+  if (action === "outline") return {
+    ...common,
+    goals: course.goals || [],
+    attachments: attachmentContext(course),
+  };
+  if (action === "activities") return {
+    ...common,
+    goals: course.goals || [],
+    modules: course.modules || [],
+  };
+  if (action === "storyboard-section") return {
+    ...common,
+    goals: course.goals || [],
+    modules: course.modules || [],
+    activities: course.activities || [],
+    targetModuleId: moduleId,
+    targetModule: (course.modules || []).find((item) => clean(item.id) === moduleId) || null,
+  };
+  return common;
 }
 
 function parseJson(text: string) {
@@ -320,6 +373,94 @@ function readMessageContent(message?: ChatMessage) {
   return message.content.map((part) => part.text || "").join("").trim();
 }
 
+function boundedText(value: unknown, fallback = "", max = 800) {
+  const text = clean(value) || fallback;
+  return text.slice(0, max);
+}
+
+function boundedNumber(value: unknown, fallback: number, min = 0, max = 240) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
+function normalizeResult(action: string, result: Record<string, unknown>, course: LooseCourse, moduleId: string) {
+  if (action === "intake") {
+    const briefPatch = typeof result.briefPatch === "object" && result.briefPatch ? result.briefPatch as Record<string, unknown> : {};
+    return {
+      message: boundedText(result.message, "我已经整理了课程任务，请确认课程任务卡。", 900),
+      courseType: boundedText(result.courseType, clean(course.courseType), 80),
+      mainline: boundedText(result.mainline, clean(course.mainline), 180),
+      suggestedLanding: stringList(result.suggestedLanding).filter((item) => ["know", "judge", "do", "improve"].includes(item)).slice(0, 4),
+      briefPatch: Object.fromEntries(["topic", "audience", "duration", "format", "scope"].map((key) => [key, boundedText(briefPatch[key], "", key === "scope" ? 500 : 120)])),
+    };
+  }
+  if (action === "goals") {
+    const generated = Array.isArray(result.goals) ? result.goals.slice(0, 5) : [];
+    const fallbackGoals = mockGoals(course).goals;
+    const goals = generated.length >= 3 ? generated : [...generated, ...fallbackGoals.slice(generated.length, 3)];
+    return { goals: goals.map((item, index) => {
+      const goal = typeof item === "object" && item ? item as Record<string, unknown> : {};
+      return { id: `goal-${index + 1}`, text: boundedText(goal.text, "待完善的课程目标", 700), evidence: boundedText(goal.evidence, "待补充达标证据", 400) };
+    }) };
+  }
+  if (action === "outline") {
+    const modules = Array.isArray(result.modules) ? result.modules.slice(0, 7) : [];
+    return { modules: modules.map((item, index) => {
+      const courseModule = typeof item === "object" && item ? item as Record<string, unknown> : {};
+      return {
+        id: `module-${index + 1}`,
+        title: boundedText(courseModule.title, `模块${index + 1}`, 120),
+        question: boundedText(courseModule.question, "这一部分要解决什么关键问题？", 260),
+        contents: stringList(courseModule.contents, ["待完善知识点"]).slice(0, 8).map((text) => text.slice(0, 120)),
+        time: boundedNumber(courseModule.time, 25, 5, 180),
+        activity: boundedText(courseModule.activity, "待设计活动", 180),
+        output: boundedText(courseModule.output, "待明确学员产出", 180),
+      };
+    }) };
+  }
+  if (action === "activities") {
+    const generated = Array.isArray(result.activities) ? result.activities.slice(0, 7) : [];
+    const fallbackActivities = mockActivities(course).activities;
+    const targetCount = Math.max(1, Math.min(7, course.modules?.length || generated.length || fallbackActivities.length));
+    const activities = Array.from({ length: targetCount }, (_, index) => generated[index] || fallbackActivities[index] || {});
+    return { activities: activities.map((item, index) => {
+      const activity = typeof item === "object" && item ? item as Record<string, unknown> : {};
+      const linkedModule = course.modules?.[index];
+      return {
+        id: `activity-${index + 1}`,
+        module: boundedText(activity.module, clean(linkedModule?.title) || `模块${index + 1}`, 120),
+        activate: boundedText(activity.activate, "先让学员作出判断并说明理由。", 700),
+        explain: boundedText(activity.explain, "讲清必要的规则、步骤和判断依据。", 700),
+        absorb: boundedText(activity.absorb, "完成一项有明确产出的练习。", 700),
+        feedback: boundedText(activity.feedback, "依据标准自查、互查并获得讲师反馈。", 500),
+        material: boundedText(activity.material, "任务卡与评价表", 300),
+      };
+    }) };
+  }
+  if (action === "storyboard-section") {
+    const generated = Array.isArray(result.slides) ? result.slides.slice(0, 6) : [];
+    const fallbackSlides = storyboardSection(course, moduleId).slides;
+    return { slides: fallbackSlides.map((fallbackSlide, index) => {
+      const baseline = fallbackSlide as Record<string, unknown>;
+      const item = generated[index] || baseline;
+      const slide = typeof item === "object" && item ? item as Record<string, unknown> : {};
+      return {
+        id: `${moduleId || "module"}-slide-${index + 1}`,
+        moduleId,
+        type: boundedText(baseline.type, index === 0 ? "章封面" : "讲解", 40),
+        stage: boundedText(baseline.stage, "讲解", 40),
+        title: boundedText(slide.title, boundedText(baseline.title, "待完善页面标题", 180), 180),
+        onScreen: stringList(slide.onScreen, stringList(baseline.onScreen, ["待完善屏上文字"])).slice(0, 8).map((text) => text.slice(0, 180)),
+        visual: boundedText(slide.visual, boundedText(baseline.visual, "使用清晰的信息层级呈现。", 600), 600),
+        speaker: boundedText(slide.speaker, boundedText(baseline.speaker, "围绕本页要点进行引导。", 700), 700),
+        learner: boundedText(slide.learner, boundedText(baseline.learner, "理解并作出回应。", 400), 400),
+        time: boundedNumber(slide.time, boundedNumber(baseline.time, 3, 0, 60), 0, 60),
+      };
+    }) };
+  }
+  return result;
+}
+
 function outputSchema(action: string) {
   if (action === "intake") return {
     message: "给用户的简短回复",
@@ -331,23 +472,27 @@ function outputSchema(action: string) {
   if (action === "goals") return { goals: [{ id: "goal-1", text: "完整ABCD课程目标", evidence: "可观察的达标证据" }] };
   if (action === "outline") return { modules: [{ id: "module-1", title: "模块标题", question: "核心问题", contents: ["知识点1"], time: 25, activity: "活动", output: "学员产出" }] };
   if (action === "activities") return { activities: [{ id: "activity-1", module: "模块标题", activate: "激活活动", explain: "讲解方法", absorb: "吸收活动", feedback: "反馈标准", material: "所需材料" }] };
+  if (action === "storyboard-section") return { slides: [{ id: "slide-1", moduleId: "目标模块ID", type: "章封面", stage: "过渡", title: "页面标题", onScreen: ["屏上全部文字"], visual: "视觉构图", speaker: "讲师提示", learner: "学员行为", time: 1 }] };
   if (action === "storyboard") return { slides: [{ id: "slide-1", type: "封面", stage: "开场", title: "页面标题", onScreen: ["屏上全部文字"], visual: "视觉构图", speaker: "讲师提示", learner: "学员行为", time: 1 }] };
   return {};
 }
 
 function assertExpectedResult(action: string, result: Record<string, unknown>) {
-  const requiredKey: Record<string, string> = { intake: "briefPatch", goals: "goals", outline: "modules", activities: "activities", storyboard: "slides" };
+  const requiredKey: Record<string, string> = { intake: "briefPatch", goals: "goals", outline: "modules", activities: "activities", storyboard: "slides", "storyboard-section": "slides" };
   const key = requiredKey[action];
   if (key && !(key in result)) throw new Error(`模型没有按课程设计所需格式返回“${key}”，请重试`);
+  if (key && key !== "briefPatch" && (!Array.isArray(result[key]) || result[key].length === 0)) throw new Error(`模型返回的“${key}”为空，请重试`);
 }
 
-async function requestModel(params: { apiKey: string; baseUrl: string; model: string; action: string; message: string; course: LooseCourse }) {
+async function requestModel(params: { apiKey: string; baseUrl: string; model: string; action: string; message: string; moduleId: string; course: LooseCourse }) {
   const endpoint = resolveEndpoint(params.baseUrl);
   const isMiniMax = new URL(endpoint).hostname.includes("minimax");
   const isMiniMaxM3 = isMiniMax && params.model.toLowerCase().includes("m3");
   const testing = params.action === "test";
 
   if (params.action === "storyboard") return buildStoryboard(params.course);
+
+  const deadline = Date.now() + 24000;
 
   async function complete(userPayload: string, maxTokens: number) {
     const requestBody: Record<string, unknown> = {
@@ -365,11 +510,24 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
       requestBody.temperature = 0.35;
       requestBody.max_tokens = maxTokens;
     }
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.apiKey}` },
-      body: JSON.stringify(requestBody),
-    });
+    const remaining = deadline - Date.now();
+    if (remaining < 1500) throw new Error("模型响应超时");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(18000, remaining));
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.apiKey}` },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") throw new Error("模型响应超时");
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!response.ok) {
       const detail = await response.text();
       throw new Error(providerErrorMessage(response.status, detail));
@@ -384,6 +542,7 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
   async function generateJson(userPayload: string, action: string, maxTokens: number) {
     let lastError = "模型返回内容不完整";
     for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (attempt > 0 && deadline - Date.now() < 4500) break;
       const retryNote = attempt
         ? "\n上一次输出被截断或JSON格式不正确。本次务必缩短文字、正确转义引号，并完整闭合所有数组和对象。只输出JSON。"
         : "";
@@ -392,10 +551,10 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
         if (completion.finishReason === "length") throw new Error("模型输出达到长度上限");
         const parsed = parseJson(completion.content);
         assertExpectedResult(action, parsed);
-        return parsed;
+        return normalizeResult(action, parsed, params.course, params.moduleId);
       } catch (error) {
         lastError = error instanceof Error ? error.message : lastError;
-        if (/模型接口返回/.test(lastError)) throw error;
+        if (/模型接口返回|模型响应超时/.test(lastError)) throw error;
       }
     }
     throw new Error(`${lastError}。系统已自动重试，请再试一次或换用输出上限更高的模型。`);
@@ -403,14 +562,15 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
 
   if (testing) return generateJson("请只返回这个JSON对象，不要添加解释：{\"ok\":true}", "test", 80);
 
+  const tokenBudget: Record<string, number> = { intake: 650, goals: 1100, outline: 1500, activities: 1700, "storyboard-section": 1700 };
   const userPayload = JSON.stringify({
     action: params.action,
     message: params.message,
-    course: compactCourse(params.course),
+    confirmedContext: stageContext(params.action, params.course, params.message, params.moduleId),
     outputSchema: outputSchema(params.action),
-    outputRules: "必须严格使用outputSchema中的英文键名；不要增加顶层字段；数组可以增加条目；每个文字字段保持简洁；只输出一个完整有效的JSON对象。",
+    outputRules: "只完成当前action；confirmedContext是用户已经确认或手动修改后的唯一依据；必须严格使用outputSchema中的英文键名；不要增加顶层字段；每个文字字段保持简洁；只输出一个完整有效的JSON对象。",
   });
-  return generateJson(userPayload, params.action, 2048);
+  return generateJson(userPayload, params.action, tokenBudget[params.action] || 1200);
 }
 
 export async function GET() {
@@ -418,15 +578,20 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json() as { action?: string; course?: LooseCourse; message?: string; runtimeConfig?: RuntimeConfig };
+  const body = await request.json() as { action?: string; course?: LooseCourse; message?: string; moduleId?: string; runtimeConfig?: RuntimeConfig };
   const action = clean(body.action);
   const course = body.course || {};
   const message = clean(body.message);
+  const moduleId = clean(body.moduleId);
   const runtimeConfig = body.runtimeConfig;
   const personalApiKey = clean(runtimeConfig?.apiKey);
   const personalBaseUrl = clean(runtimeConfig?.baseUrl);
   const personalModel = clean(runtimeConfig?.model);
   const apiKey = personalApiKey || clean(process.env.LLM_API_KEY);
+  const allowedActions = new Set(["test", "intake", "goals", "outline", "activities", "storyboard", "storyboard-section"]);
+
+  if (!allowedActions.has(action)) return NextResponse.json({ error: "未知生成任务" }, { status: 400 });
+  if (action === "storyboard-section" && !moduleId) return NextResponse.json({ error: "缺少要生成的课程模块" }, { status: 400 });
 
   if (runtimeConfig && (!personalApiKey || !personalBaseUrl || !personalModel)) {
     return NextResponse.json({ error: "请把 API 密钥、接口地址和模型名称填写完整" }, { status: 400 });
@@ -440,21 +605,21 @@ export async function POST(request: Request) {
 
   if (!apiKey) {
     if (action === "test") return NextResponse.json({ error: "请先填写 API 密钥" }, { status: 400 });
-    return NextResponse.json({ ...mockResponse(action, course, message), mode: "demo" });
+    return NextResponse.json({ ...mockResponse(action, course, message, moduleId), mode: "demo" });
   }
 
   const baseUrl = personalBaseUrl || clean(process.env.LLM_BASE_URL) || "https://api.openai.com/v1";
   const model = personalModel || clean(process.env.LLM_MODEL) || "gpt-4.1-mini";
 
   try {
-    const result = await requestModel({ apiKey, baseUrl, model, action, message, course });
+    const result = await requestModel({ apiKey, baseUrl, model, action, message, moduleId, course });
     if (action === "test") return NextResponse.json({ ok: true, mode: "ai", model });
     return NextResponse.json({ ...result, mode: action === "storyboard" ? "structured" : "ai" });
   } catch (error) {
     if (action === "test") {
       return NextResponse.json({ error: error instanceof Error ? error.message : "模型连接失败" }, { status: 502 });
     }
-    const fallback = mockResponse(action, course, message);
+    const fallback = mockResponse(action, course, message, moduleId);
     const warning = runtimeConfig ? "模型暂时没有返回有效内容，已先按内置课程方法生成可编辑初稿。" : undefined;
     return NextResponse.json({ ...fallback, mode: "fallback", warning });
   }

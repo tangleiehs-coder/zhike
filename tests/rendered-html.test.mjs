@@ -47,7 +47,11 @@ test("keeps the course method and server-side model configuration explicit", asy
     readFile(new URL("../.env.example", import.meta.url), "utf8"),
   ]);
   assert.match(page, /激活·讲解·吸收/);
-  assert.match(page, /章封面/);
+  assert.match(page, /按章节生成PPT逐页方案/);
+  assert.match(page, /dirtyStages/);
+  assert.match(page, /updateModule/);
+  assert.match(page, /updateActivity/);
+  assert.match(page, /updateSlide/);
   assert.match(page, /模型设置/);
   assert.match(page, /在此浏览器记住设置/);
   assert.match(page, /zhike-model-config-v1/);
@@ -58,6 +62,11 @@ test("keeps the course method and server-side model configuration explicit", asy
   assert.match(route, /max_completion_tokens/);
   assert.match(route, /thinking/);
   assert.match(route, /buildStoryboard/);
+  assert.match(route, /storyboard-section/);
+  assert.match(route, /stageContext/);
+  assert.match(route, /confirmedContext/);
+  assert.match(route, /AbortController/);
+  assert.match(route, /章封面/);
   assert.match(route, /系统已自动重试/);
   assert.match(envExample, /^LLM_API_KEY=$/m);
   assert.doesNotMatch(envExample, /sk-|YOUR_API_KEY/);
@@ -112,4 +121,23 @@ test("generates the PPT storyboard without waiting on the model", async () => {
   assert.equal(result.slides.length, 14);
   assert.ok(result.slides.some((slide) => slide.title.includes("边界")));
   assert.ok(result.slides.some((slide) => slide.type === "吸收·实践"));
+});
+
+test("generates one editable PPT chapter at a time", async () => {
+  const course = {
+    brief: { topic: "信息保密", audience: "全体员工", duration: "2小时", format: "线下" },
+    goals: [{ id: "goal-1", text: "能够判断常见泄密风险", evidence: "完成情境判断" }],
+    modules: [
+      { id: "module-a", title: "识别保密信息", question: "哪些信息需要保护？", contents: ["信息范围", "使用边界"], time: 25, activity: "卡片分类", output: "识别清单" },
+      { id: "module-b", title: "判断泄密风险", question: "哪些动作有风险？", contents: ["传递", "存储"], time: 35, activity: "情境辨析", output: "判断记录" },
+    ],
+    activities: [],
+  };
+  const response = await callApi({ action: "storyboard-section", moduleId: "module-b", course });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.slides.length, 5);
+  assert.ok(result.slides.every((slide) => slide.moduleId === "module-b"));
+  assert.ok(result.slides.some((slide) => slide.type === "章封面"));
+  assert.ok(result.slides.some((slide) => slide.title.includes("判断泄密风险")));
 });
