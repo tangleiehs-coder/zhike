@@ -28,6 +28,13 @@ type LooseCourse = {
   attachments?: Array<Record<string, unknown>>;
 };
 
+type RuntimeConfig = {
+  provider?: string;
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+};
+
 function clean(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -178,8 +185,101 @@ function compactCourse(course: LooseCourse) {
 }
 
 function parseJson(text: string) {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  return JSON.parse(cleaned) as Record<string, unknown>;
+  const withoutThinking = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  const cleaned = withoutThinking.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  try {
+    return JSON.parse(cleaned) as Record<string, unknown>;
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("模型返回的内容不是有效 JSON");
+    return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+  }
+}
+
+function resolveEndpoint(baseUrl: string) {
+  const allowedHosts = new Set([
+    "api.minimaxi.com",
+    "api.minimax.io",
+    "api.openai.com",
+    ...clean(process.env.LLM_ALLOWED_HOSTS).split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
+  ]);
+  let url: URL;
+  try { url = new URL(baseUrl); } catch { throw new Error("接口地址格式不正确"); }
+  if (url.protocol !== "https:" || url.username || url.password) throw new Error("接口地址必须使用安全的 HTTPS 地址");
+  if (!allowedHosts.has(url.hostname.toLowerCase())) throw new Error("该接口域名尚未加入站点安全名单");
+  const normalized = url.toString().replace(/\/$/, "");
+  return normalized.endsWith("/chat/completions") ? normalized : `${normalized}/chat/completions`;
+}
+
+function providerErrorMessage(status: number, detail: string) {
+  const safeDetail = detail.replace(/[\r\n]+/g, " ").slice(0, 220);
+  return `模型接口返回 ${status}${safeDetail ? `：${safeDetail}` : ""}`;
+}
+
+function outputSchema(action: string) {
+  if (action === "intake") return {
+    message: "给用户的简短回复",
+    courseType: "课程类型",
+    mainline: "课程主线",
+    suggestedLanding: ["know", "judge", "do"],
+    briefPatch: { topic: "课程主题", audience: "目标学员", duration: "时长", format: "授课形式", scope: "内容范围" },
+  };
+  if (action === "goals") return { goals: [{ id: "goal-1", text: "完整ABCD课程目标", evidence: "可观察的达标证据" }] };
+  if (action === "outline") return { modules: [{ id: "module-1", title: "模块标题", question: "核心问题", contents: ["知识点1"], time: 25, activity: "活动", output: "学员产出" }] };
+  if (action === "activities") return { activities: [{ id: "activity-1", module: "模块标题", activate: "激活活动", explain: "讲解方法", absorb: "吸收活动", feedback: "反馈标准", material: "所需材料" }] };
+  if (action === "storyboard") return { slides: [{ id: "slide-1", type: "封面", stage: "开场", title: "页面标题", onScreen: ["屏上全部文字"], visual: "视觉构图", speaker: "讲师提示", learner: "学员行为", time: 1 }] };
+  return {};
+}
+
+function assertExpectedResult(action: string, result: Record<string, unknown>) {
+  const requiredKey: Record<string, string> = { intake: "briefPatch", goals: "goals", outline: "modules", activities: "activities", storyboard: "slides" };
+  const key = requiredKey[action];
+  if (key && !(key in result)) throw new Error(`模型没有按课程设计所需格式返回“${key}”，请重试`);
+}
+
+async function requestModel(params: { apiKey: string; baseUrl: string; model: string; action: string; message: string; course: LooseCourse }) {
+  const endpoint = resolveEndpoint(params.baseUrl);
+  const isMiniMax = new URL(endpoint).hostname.includes("minimax");
+  const testing = params.action === "test";
+  const userPayload = testing
+    ? "请只返回这个JSON对象，不要添加解释：{\"ok\":true}"
+    : JSON.stringify({
+      action: params.action,
+      message: params.message,
+      course: compactCourse(params.course),
+      outputSchema: outputSchema(params.action),
+      outputRules: "必须严格使用outputSchema中的英文键名；不要增加顶层字段；数组可以增加条目；只输出一个有效JSON对象。",
+    });
+  const requestBody: Record<string, unknown> = {
+    model: params.model,
+    messages: [
+      { role: "system", content: testing ? "你是接口连通性测试助手，只输出有效JSON。" : SYSTEM_PROMPT },
+      { role: "user", content: userPayload },
+    ],
+    max_tokens: testing ? 80 : params.action === "storyboard" ? 10000 : 5000,
+  };
+  if (isMiniMax) {
+    requestBody.temperature = 1;
+    requestBody.reasoning_split = true;
+  } else {
+    requestBody.temperature = 0.35;
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.apiKey}` },
+    body: JSON.stringify(requestBody),
+  });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(providerErrorMessage(response.status, detail));
+  }
+  const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const content = result.choices?.[0]?.message?.content;
+  if (!content) throw new Error("模型没有返回内容");
+  const parsed = parseJson(content);
+  if (!testing) assertExpectedResult(params.action, parsed);
+  return parsed;
 }
 
 export async function GET() {
@@ -187,38 +287,42 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json() as { action?: string; course?: LooseCourse; message?: string };
+  const body = await request.json() as { action?: string; course?: LooseCourse; message?: string; runtimeConfig?: RuntimeConfig };
   const action = clean(body.action);
   const course = body.course || {};
   const message = clean(body.message);
-  const apiKey = clean(process.env.LLM_API_KEY);
+  const runtimeConfig = body.runtimeConfig;
+  const personalApiKey = clean(runtimeConfig?.apiKey);
+  const personalBaseUrl = clean(runtimeConfig?.baseUrl);
+  const personalModel = clean(runtimeConfig?.model);
+  const apiKey = personalApiKey || clean(process.env.LLM_API_KEY);
 
-  if (!apiKey) return NextResponse.json({ ...mockResponse(action, course, message), mode: "demo" });
+  if (runtimeConfig && (!personalApiKey || !personalBaseUrl || !personalModel)) {
+    return NextResponse.json({ error: "请把 API 密钥、接口地址和模型名称填写完整" }, { status: 400 });
+  }
 
-  const baseUrl = clean(process.env.LLM_BASE_URL) || "https://api.openai.com/v1";
-  const endpoint = baseUrl.endsWith("/chat/completions") ? baseUrl : `${baseUrl.replace(/\/$/, "")}/chat/completions`;
-  const model = clean(process.env.LLM_MODEL) || "gpt-4.1-mini";
-  const userPayload = JSON.stringify({ action, message, course: compactCourse(course) });
+  if (runtimeConfig) {
+    try { resolveEndpoint(personalBaseUrl); } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "接口地址不可用" }, { status: 400 });
+    }
+  }
+
+  if (!apiKey) {
+    if (action === "test") return NextResponse.json({ error: "请先填写 API 密钥" }, { status: 400 });
+    return NextResponse.json({ ...mockResponse(action, course, message), mode: "demo" });
+  }
+
+  const baseUrl = personalBaseUrl || clean(process.env.LLM_BASE_URL) || "https://api.openai.com/v1";
+  const model = personalModel || clean(process.env.LLM_MODEL) || "gpt-4.1-mini";
 
   try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model,
-        temperature: 0.35,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userPayload },
-        ],
-      }),
-    });
-    if (!response.ok) throw new Error(`模型接口返回 ${response.status}`);
-    const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-    const content = result.choices?.[0]?.message?.content;
-    if (!content) throw new Error("模型没有返回内容");
-    return NextResponse.json({ ...parseJson(content), mode: "ai" });
-  } catch {
+    const result = await requestModel({ apiKey, baseUrl, model, action, message, course });
+    if (action === "test") return NextResponse.json({ ok: true, mode: "ai", model });
+    return NextResponse.json({ ...result, mode: "ai" });
+  } catch (error) {
+    if (runtimeConfig || action === "test") {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "模型连接失败" }, { status: 502 });
+    }
     return NextResponse.json({ ...mockResponse(action, course, message), mode: "fallback" });
   }
 }

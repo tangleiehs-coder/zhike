@@ -44,6 +44,13 @@ type Slide = {
   time: number;
 };
 type Message = { id: string; role: "user" | "assistant"; text: string };
+type RuntimeModelConfig = {
+  provider: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+};
+type ModelStatus = "idle" | "saved" | "testing" | "ready" | "error";
 
 type CourseState = {
   phase: StageId;
@@ -87,6 +94,18 @@ const landingOptions: { key: LandingKey; title: string; verb: string; note: stri
   { key: "do", title: "完成具体任务", verb: "会做", note: "使用工具或流程完成一项工作" },
   { key: "improve", title: "改善工作问题", verb: "改善", note: "改变影响结果的关键岗位行为" },
 ];
+
+const MODEL_STORAGE_KEY = "zhike-model-config-v1";
+const modelPresets = [
+  { id: "minimax-cn", label: "MiniMax 国内", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" },
+  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
+  { id: "custom", label: "其他兼容接口", baseUrl: "", model: "" },
+];
+
+function defaultModelConfig(): RuntimeModelConfig {
+  const preset = modelPresets[0];
+  return { provider: preset.id, apiKey: "", baseUrl: preset.baseUrl, model: preset.model };
+}
 
 function initialState(): CourseState {
   return {
@@ -132,20 +151,40 @@ export default function Home() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [apiReady, setApiReady] = useState(false);
+  const [modelConfig, setModelConfig] = useState<RuntimeModelConfig>(defaultModelConfig);
+  const [modelStatus, setModelStatus] = useState<ModelStatus>("idle");
+  const [modelMessage, setModelMessage] = useState("");
+  const [showModelSettings, setShowModelSettings] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [rememberModel, setRememberModel] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [slideFilter, setSlideFilter] = useState("全部");
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("zhike-course-draft-v1");
-    if (saved) {
-      try { setCourse(JSON.parse(saved) as CourseState); } catch { /* 保留新草稿 */ }
-    }
-    setHydrated(true);
+    const hydrationTimer = window.setTimeout(() => {
+      const saved = window.localStorage.getItem("zhike-course-draft-v1");
+      if (saved) {
+        try { setCourse(JSON.parse(saved) as CourseState); } catch { /* 保留新草稿 */ }
+      }
+      const savedModel = window.localStorage.getItem(MODEL_STORAGE_KEY);
+      if (savedModel) {
+        try {
+          const parsed = JSON.parse(savedModel) as RuntimeModelConfig;
+          if (parsed.apiKey && parsed.baseUrl && parsed.model) {
+            setModelConfig(parsed);
+            setRememberModel(true);
+            setModelStatus("saved");
+          }
+        } catch { window.localStorage.removeItem(MODEL_STORAGE_KEY); }
+      }
+      setHydrated(true);
+    }, 0);
     fetch("/api/course-assistant")
       .then((response) => response.json())
       .then((data: { configured?: boolean }) => setApiReady(Boolean(data.configured)))
       .catch(() => setApiReady(false));
+    return () => window.clearTimeout(hydrationTimer);
   }, []);
 
   useEffect(() => {
@@ -172,7 +211,7 @@ export default function Home() {
       const response = await fetch("/api/course-assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, course, ...extra }),
+        body: JSON.stringify({ action, course, ...extra, runtimeConfig: modelConfig.apiKey ? modelConfig : undefined }),
       });
       const data = await response.json() as Record<string, unknown> & { error?: string };
       if (!response.ok) throw new Error(data.error || "生成失败");
@@ -183,6 +222,47 @@ export default function Home() {
     } finally {
       setBusy("");
     }
+  }
+
+  function chooseProvider(provider: string) {
+    const preset = modelPresets.find((item) => item.id === provider) || modelPresets[2];
+    setModelConfig((current) => ({ ...current, provider, baseUrl: preset.baseUrl, model: preset.model }));
+    setModelStatus("idle");
+    setModelMessage("");
+  }
+
+  async function testModelConnection() {
+    if (!modelConfig.apiKey.trim() || !modelConfig.baseUrl.trim() || !modelConfig.model.trim()) {
+      setModelStatus("error");
+      setModelMessage("请把 API 密钥、接口地址和模型名称填写完整。");
+      return;
+    }
+    setModelStatus("testing");
+    setModelMessage("正在测试连接…");
+    try {
+      const response = await fetch("/api/course-assistant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "test", runtimeConfig: modelConfig }),
+      });
+      const data = await response.json() as { ok?: boolean; error?: string; model?: string };
+      if (!response.ok || !data.ok) throw new Error(data.error || "连接测试失败");
+      if (rememberModel) window.localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(modelConfig));
+      else window.localStorage.removeItem(MODEL_STORAGE_KEY);
+      setModelStatus("ready");
+      setModelMessage(`连接成功，当前使用 ${data.model || modelConfig.model}。`);
+    } catch (error) {
+      setModelStatus("error");
+      setModelMessage(error instanceof Error ? error.message : "连接失败，请检查设置。");
+    }
+  }
+
+  function clearModelConfig() {
+    window.localStorage.removeItem(MODEL_STORAGE_KEY);
+    setModelConfig(defaultModelConfig());
+    setRememberModel(false);
+    setModelStatus("idle");
+    setModelMessage("已清除当前浏览器中保存的模型设置。");
   }
 
   async function submitTask() {
@@ -392,7 +472,7 @@ export default function Home() {
         <h1>把“掌握”变成能够做到</h1>
         <p className="lead">系统使用ABCD公式，但不会让用户背术语。每个目标都要对应一个看得见的学员表现和达标证据。</p>
         {!course.goals.length ? <div className="empty-state"><span>ABCD</span><h2>目标所需信息已经就绪</h2><p>系统将结合学员、学习落点、使用情境和课程时长生成3—5项可评价目标。</p><button className="primary large" type="button" disabled={busy === "goals"} onClick={generateGoals}>{busy === "goals" ? "正在生成…" : "生成课程目标"}<span>→</span></button></div> : <div className="goal-list">
-          {course.goals.map((goal, index) => <article key={goal.id}><span>{String(index + 1).padStart(2, "0")}</span><div><label>课程目标</label><textarea rows={3} value={goal.text} onChange={(event) => setCourse((current) => ({ ...current, goals: current.goals.map((item) => item.id === goal.id ? { ...item, text: event.target.value } : item) }))} /><label>达标证据</label><input value={goal.evidence} onChange={(event) => setCourse((current) => ({ ...current, goals: current.goals.map((item) => item.id === goal.id ? { ...item, evidence: event.target.value } : item) }))} /></div></article>)}
+          {course.goals.map((goal, index) => <article key={goal.id}><span>{String(index + 1).padStart(2, "0")}</span><div><span className="field-label">课程目标</span><textarea aria-label={`课程目标${index + 1}`} rows={3} value={goal.text} onChange={(event) => setCourse((current) => ({ ...current, goals: current.goals.map((item) => item.id === goal.id ? { ...item, text: event.target.value } : item) }))} /><span className="field-label">达标证据</span><input aria-label={`目标${index + 1}的达标证据`} value={goal.evidence} onChange={(event) => setCourse((current) => ({ ...current, goals: current.goals.map((item) => item.id === goal.id ? { ...item, evidence: event.target.value } : item) }))} /></div></article>)}
         </div>}
         {!!course.goals.length && <div className="stage-actions split"><button className="ghost" type="button" onClick={generateGoals}>重新生成</button><button className="primary large" type="button" onClick={() => setCourse((current) => ({ ...current, phase: 4 }))}>确认目标，搭课程骨架 <span>→</span></button></div>}
       </section>
@@ -460,7 +540,7 @@ export default function Home() {
       </aside>
 
       <section className="main-content">
-        <header className="topbar"><div><span className="crumb">我的课程 /</span><strong>{course.brief.topic || "新课程"}</strong></div><div className="top-actions"><span className={`api-state ${apiReady ? "ready" : ""}`}><i />{apiReady ? "AI 已连接" : "演示模式"}</span><span className="save-state">本机已保存</span><button type="button" onClick={exportPlan} disabled={!course.goals.length}>导出方案</button></div></header>
+        <header className="topbar"><div><span className="crumb">我的课程 /</span><strong>{course.brief.topic || "新课程"}</strong></div><div className="top-actions"><span className={`api-state ${modelStatus === "ready" || modelStatus === "saved" || apiReady ? "ready" : ""}`}><i />{modelStatus === "ready" ? "个人 AI 已连接" : modelStatus === "saved" ? "个人 AI 已保存" : apiReady ? "站点 AI 已连接" : "演示模式"}</span><span className="save-state">课程已保存</span><button className="model-settings-button" type="button" onClick={() => setShowModelSettings(true)}>模型设置</button><button type="button" onClick={exportPlan} disabled={!course.goals.length}>导出方案</button></div></header>
         <div className="workspace"><div className="content-column">{notice && <div className="notice" role="status">{notice}<button type="button" onClick={() => setNotice("")}>×</button></div>}{renderStage()}</div>
           <aside className="task-card"><div className="card-head"><div><span>COURSE BRIEF</span><h2>课程任务卡</h2></div><b>{completedCount}/7</b></div><p className="card-note">用户提供、系统建议和待确认内容统一放在这里，随时可以修改。</p>
             <div className="brief-fields"><label><span>课程主题</span><input value={course.brief.topic} onChange={(event) => patchBrief("topic", event.target.value)} placeholder="等待提取" /></label><label><span>目标学员</span><input value={course.brief.audience} onChange={(event) => patchBrief("audience", event.target.value)} placeholder="待确认" /></label><div className="brief-pair"><label><span>课程时长</span><input value={course.brief.duration} onChange={(event) => patchBrief("duration", event.target.value)} placeholder="待确认" /></label><label><span>授课形式</span><input value={course.brief.format} onChange={(event) => patchBrief("format", event.target.value)} placeholder="待确认" /></label></div><label><span>学习落点</span><textarea rows={3} value={course.brief.learningFocus} onChange={(event) => patchBrief("learningFocus", event.target.value)} placeholder="第2步确定" /></label><label><span>内容范围</span><input value={course.brief.scope} onChange={(event) => patchBrief("scope", event.target.value)} placeholder="根据资料确认" /></label><label><span>交付成果</span><textarea rows={2} value={course.brief.deliverable} onChange={(event) => patchBrief("deliverable", event.target.value)} /></label></div>
@@ -469,6 +549,22 @@ export default function Home() {
           </aside>
         </div>
       </section>
+      {showModelSettings && <div className="model-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowModelSettings(false); }}>
+        <section className="model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title">
+          <header><div><span>MODEL CONNECTION</span><h2 id="model-dialog-title">连接你的大模型</h2></div><button type="button" aria-label="关闭模型设置" onClick={() => setShowModelSettings(false)}>×</button></header>
+          <p className="model-intro">密钥会通过加密连接发送到本站服务端，用于代你请求模型，本站不会写入数据库或日志。</p>
+          <div className="provider-tabs" aria-label="模型服务商">{modelPresets.map((preset) => <button className={modelConfig.provider === preset.id ? "active" : ""} type="button" key={preset.id} onClick={() => chooseProvider(preset.id)}>{preset.label}</button>)}</div>
+          <div className="model-fields">
+            <label><span>API 密钥</span><div className="secret-input"><input autoComplete="off" type={showApiKey ? "text" : "password"} value={modelConfig.apiKey} onChange={(event) => { setModelConfig((current) => ({ ...current, apiKey: event.target.value })); setModelStatus("idle"); }} placeholder="粘贴你的 API Key" /><button type="button" onClick={() => setShowApiKey((current) => !current)}>{showApiKey ? "隐藏" : "显示"}</button></div></label>
+            <label><span>接口地址（Base URL）</span><input value={modelConfig.baseUrl} onChange={(event) => { setModelConfig((current) => ({ ...current, baseUrl: event.target.value })); setModelStatus("idle"); }} placeholder="https://…/v1" /></label>
+            <label><span>模型名称</span><input value={modelConfig.model} onChange={(event) => { setModelConfig((current) => ({ ...current, model: event.target.value })); setModelStatus("idle"); }} placeholder="例如 MiniMax-M3" /></label>
+          </div>
+          {modelConfig.provider === "custom" && <p className="allowlist-note">其他接口需兼容 OpenAI Chat Completions，且接口域名需要由站点管理员加入安全名单。</p>}
+          <label className="remember-model" htmlFor="remember-model" aria-label="在此浏览器记住设置"><input id="remember-model" type="checkbox" checked={rememberModel} onChange={(event) => { setRememberModel(event.target.checked); if (!event.target.checked) window.localStorage.removeItem(MODEL_STORAGE_KEY); }} /><span><strong>在此浏览器记住设置</strong><small>会把接口信息和密钥保存在浏览器本地。共享电脑请勿勾选。</small></span></label>
+          {modelMessage && <div className={`model-result ${modelStatus}`} role="status">{modelMessage}</div>}
+          <footer><button className="clear-model" type="button" onClick={clearModelConfig}>清除设置</button><div><button type="button" onClick={() => setShowModelSettings(false)}>取消</button><button className="primary" type="button" disabled={modelStatus === "testing"} onClick={() => void testModelConnection()}>{modelStatus === "testing" ? "正在测试…" : "测试并使用"}</button></div></footer>
+        </section>
+      </div>}
     </main>
   );
 }

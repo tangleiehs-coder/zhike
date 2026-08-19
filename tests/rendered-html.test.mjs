@@ -48,10 +48,25 @@ test("keeps the course method and server-side model configuration explicit", asy
   ]);
   assert.match(page, /激活·讲解·吸收/);
   assert.match(page, /章封面/);
+  assert.match(page, /模型设置/);
+  assert.match(page, /在此浏览器记住设置/);
+  assert.match(page, /zhike-model-config-v1/);
   assert.match(route, /ABCD目标/);
   assert.match(route, /业务问题和培训边界/);
+  assert.match(route, /runtimeConfig/);
+  assert.match(route, /api\.minimaxi\.com/);
   assert.match(envExample, /^LLM_API_KEY=$/m);
   assert.doesNotMatch(envExample, /sk-|YOUR_API_KEY/);
+});
+
+test("rejects unsafe personal model endpoints before making a network request", async () => {
+  const response = await callApi({
+    action: "test",
+    runtimeConfig: { apiKey: "local-test-key", baseUrl: "http://127.0.0.1:8080/v1", model: "test-model" },
+  });
+  assert.equal(response.status, 400);
+  const result = await response.json();
+  assert.match(result.error, /HTTPS|安全名单/);
 });
 
 test("generates goals and a page-by-page PPT plan in demo mode", async () => {
