@@ -133,35 +133,127 @@ function mockActivities(course: LooseCourse) {
   };
 }
 
-function mockStoryboard(course: LooseCourse) {
-  const topic = clean(course.brief?.topic) || "课程主题";
+function stringList(value: unknown, fallback: string[] = []) {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : fallback;
+}
+
+function buildStoryboard(course: LooseCourse) {
+  const topic = clean(course.brief?.topic) || extractTopic(course.rawTask || "") || "课程主题";
+  const audience = clean(course.brief?.audience) || "参训学员";
   const modules = course.modules?.length ? course.modules : (mockOutline(course).modules as Array<Record<string, unknown>>);
-  const m1 = String(modules[0]?.title || "认识主题");
-  const m2 = String(modules[1]?.title || "理解方法");
-  const m3 = String(modules[2]?.title || "场景应用");
-  const directory = [m1, m2, m3, String(modules[3]?.title || "总结行动")];
-  const chapterVisual = (current: string) => `页面保留完整四章目录，${current}使用橙色实心块突出，其余章节以低对比度灰绿色显示；右下角显示当前进度。`;
-  return {
-    slides: [
-      { id: "s1", type: "封面", stage: "开场", title: topic, onScreen: [topic, "从知道要求，到工作中做出正确选择", "企业内训课程"], visual: "深绿色全幅底色，中央以大标题建立焦点；橙色方块作为品牌识别，背景用抽象信息流线条，不使用无关人物照片。", speaker: "简短自我介绍，只说明本课程与日常工作的关系。", learner: "进入课程情境。", time: 1 },
-      { id: "s2", type: "开场", stage: "激活", title: "这几个日常动作，哪个最危险？", onScreen: ["把文件发到个人邮箱", "会议后把材料留在桌面", "在群聊中转发内部截图", "使用公共工具处理工作文件"], visual: "四张等宽情境卡，先只显示行为，不显示答案；点击后逐项出现风险标记。", speaker: "请学员独立选择，不急着公布答案，观察分歧。", learner: "举手或扫码选择风险最高的行为。", time: 5 },
-      { id: "s3", type: "开场", stage: "讲解", title: "今天，我们练会三件事", onScreen: ["识别：哪些信息需要保护", "判断：哪些行为可能带来风险", "行动：遇到情境时应该怎么做"], visual: "三段式箭头从左向右递进，识别、判断、行动分别用眼睛、分岔、检查标记的简洁图标表达。", speaker: "说明课程边界：面向全员的基本判断与行动，不替代涉密岗位专项操作培训。", learner: "了解课程目标和边界。", time: 3 },
-      { id: "s4", type: "目录", stage: "导航", title: "课程地图", onScreen: directory, visual: "四章目录纵向排列，每章用编号、问题式标题和预计时间组成；底部用一条细线串联。", speaker: "用一句话介绍每章要解决的问题。", learner: "建立全课鸟瞰图。", time: 2 },
-      { id: "s5", type: "章封面", stage: "过渡", title: m1, onScreen: directory, visual: chapterVisual(m1), speaker: "从开场分歧过渡到第一章。", learner: "定位当前章节。", time: 1 },
-      { id: "s6", type: "小节封面", stage: "过渡", title: "先划清边界，再谈正确行动", onScreen: ["不是所有信息都同等敏感", "不能只凭个人感觉判断"], visual: "大标题居左，右侧用由浅到深的三层信息卡表现保护程度差异。", speaker: "提出本节核心问题，不展开细节。", learner: "带着问题进入学习。", time: 1 },
-      { id: "s7", type: "激活", stage: "激活", title: "请给这些信息分分类", onScreen: ["客户名单", "公开宣传册", "内部会议纪要", "尚未发布的经营数据", "个人联系方式"], visual: "五张可移动卡片，下方设置“可公开／内部使用／需重点保护”三个暂定区域，并标注最终分类以企业制度为准。", speaker: "组织个人判断后小组核对，收集分歧最大的卡片。", learner: "完成信息卡片分类并说明依据。", time: 7 },
-      { id: "s8", type: "讲解", stage: "讲解", title: "识别信息，先看三个判断点", onScreen: ["来源：信息从哪里产生", "影响：外泄会造成什么后果", "规则：企业如何分类和授权"], visual: "三个同心圆形成识别模型，中心为规则，外圈依次是来源与影响；侧边保留“待企业制度核实”提示。", speaker: "结合用户提供的制度替换通用示例，不自行编造密级。", learner: "记录本企业的判断依据。", time: 9 },
-      { id: "s9", type: "吸收·思考", stage: "吸收", title: "为什么它需要保护？", onScreen: ["任选一张信息卡", "写出你的判断", "说明依据和可能后果"], visual: "左侧任务指令，右侧三格思考模板：我的判断／我的依据／可能后果。", speaker: "邀请两名学员表达，按判断依据而不是标准答案点评。", learner: "独立写下判断并口头解释。", time: 5 },
-      { id: "s10", type: "章封面", stage: "过渡", title: m2, onScreen: directory, visual: chapterVisual(m2), speaker: "由信息边界过渡到高频工作场景。", learner: "定位当前章节。", time: 1 },
-      { id: "s11", type: "讲解", stage: "讲解", title: "风险通常发生在信息流动的过程中", onScreen: ["接收", "存储", "使用", "传递", "销毁", "异常报告"], visual: "一条从接收到报告的信息生命周期流程，风险点用橙色提示点标在流程节点下方。", speaker: "逐步揭示流程，只讲与全体员工共同工作场景有关的行为。", learner: "对照自己的工作寻找高频节点。", time: 10 },
-      { id: "s12", type: "吸收·练习", stage: "吸收", title: "找出场景里的风险动作", onScreen: ["阅读场景", "圈出风险动作", "写出正确做法", "小组形成一致答案"], visual: "左侧呈现办公室综合情境图，右侧为风险动作与正确做法两列表格；答案在下一次点击后出现。", speaker: "按任务、时间、步骤、产出四项说明活动；巡视时不提前给答案。", learner: "小组完成找错和纠正建议。", time: 12 },
-      { id: "s13", type: "章封面", stage: "过渡", title: m3, onScreen: directory, visual: chapterVisual(m3), speaker: "从发现风险进入完整处理练习。", learner: "定位当前章节。", time: 1 },
-      { id: "s14", type: "吸收·实践", stage: "吸收", title: "完成一次信息处理桌面推演", onScreen: ["任务：处理一份需要跨部门协作的内部文件", "产出：处理流程＋关键控制点＋异常报告方式", "标准：不遗漏检查表中的关键步骤"], visual: "中央为任务流程画布，四周放置角色卡、文件卡、工具卡和异常事件卡；右下角显示15分钟倒计时。", speaker: "分发任务卡，结束后依据企业流程检查表反馈；没有企业流程时明确标注为待核实草案。", learner: "小组完成流程推演并展示成果。", time: 18 },
-      { id: "s15", type: "总结", stage: "总结", title: "一张图带走：识别、判断、行动", onScreen: ["识别：这是什么信息", "判断：现在能不能这样处理", "行动：按规则处理，异常立即报告"], visual: "三层环形知识地图，中间放“保护信息”，外围依次连接识别、判断、行动；右侧列出三条自检问题。", speaker: "不重新讲课，用提问让学员共同补全知识地图。", learner: "闭卷说出三个关键词及其含义。", time: 5 },
-      { id: "s16", type: "收尾", stage: "收尾", title: "从明天开始，改变一个动作", onScreen: ["我最需要警惕的场景是……", "我要停止的一个动作是……", "我要开始坚持的一个动作是……"], visual: "留白为主的行动卡页面，底部用细线连接“今天学习”与“明天行动”。", speaker: "给学员一分钟完成行动卡，可邀请自愿分享；说明后续自查或提醒安排。", learner: "完成个人岗位行动承诺。", time: 4 },
-      { id: "s17", type: "收尾", stage: "结束", title: "保护信息，也是保护我们的工作", onScreen: ["谢谢参与", "请带走你的信息处理行动卡"], visual: "深绿色结束页，橙色细线形成闭合保护框，保持与封面一致。", speaker: "致谢并说明课程材料和咨询渠道。", learner: "带走岗位辅助材料。", time: 1 },
-    ],
-  };
+  const activityList = Array.isArray(course.activities) ? course.activities as Array<Record<string, unknown>> : [];
+  const directory = modules.map((module, index) => `${index + 1}. ${String(module.title || `模块${index + 1}`)}`);
+  const slides: Array<Record<string, unknown>> = [
+    {
+      type: "封面",
+      stage: "开场",
+      title: topic,
+      onScreen: [topic, "从课程任务，到可落地的工作行动", audience],
+      visual: "深绿色全幅底色，中心大标题建立焦点，橙色短线作为品牌识别；背景使用简洁的信息流线条。",
+      speaker: "用一句话说明课程与学员工作的关系，不急着讲知识点。",
+      learner: "进入课程情境，知道今天要解决什么问题。",
+      time: 1,
+    },
+    {
+      type: "目录",
+      stage: "导航",
+      title: "课程地图",
+      onScreen: directory,
+      visual: "完整目录纵向排列，每章包含编号、问题式标题和预计时长；底部用细线串联学习路径。",
+      speaker: "用全课鸟瞰图说明学习顺序，让学员知道每一章解决的问题。",
+      learner: "建立全课结构感。",
+      time: 2,
+    },
+  ];
+
+  modules.forEach((module, index) => {
+    const title = String(module.title || `模块${index + 1}`);
+    const question = String(module.question || "这一章要解决什么关键问题？");
+    const contents = stringList(module.contents, ["关键概念", "判断标准", "行动方法"]).slice(0, 4);
+    const activity = activityList.find((item) => String(item.module || "") === title) || {};
+    const activityName = String(module.activity || activity.material || "情境练习");
+    const output = String(module.output || "学习产出");
+    const absorbType = index === modules.length - 1 ? "吸收·实践" : index % 2 ? "吸收·练习" : "吸收·思考";
+    const currentDirectory = directory.map((item, directoryIndex) => directoryIndex === index ? `▶ ${item}` : item);
+
+    slides.push(
+      {
+        type: "章封面",
+        stage: "过渡",
+        title,
+        onScreen: currentDirectory,
+        visual: "保留完整目录，当前章使用橙色实心块突出，其余章节用低对比度灰绿色显示，右下角显示当前进度。",
+        speaker: `从上一部分过渡到“${title}”，只点出本章要解决的问题。`,
+        learner: "确认当前学习位置。",
+        time: 1,
+      },
+      {
+        type: "小节封面",
+        stage: "过渡",
+        title: question,
+        onScreen: [title, question],
+        visual: "左侧大号问题标题，右侧用三张递进卡片预告本节内容，不展示答案。",
+        speaker: "把本章内容转化为一个待解决的问题，激发学员带着问题听。",
+        learner: "形成学习期待。",
+        time: 1,
+      },
+      {
+        type: "激活",
+        stage: "激活",
+        title: "先判断：你会怎么做？",
+        onScreen: [question, "请先独立判断", "再与同伴核对理由"],
+        visual: "页面中间放一个真实工作情境卡，右侧留出选择区或理由区，答案暂不出现。",
+        speaker: String(activity.activate || "给出一个与本章相关的典型场景，请学员先判断再表达理由。"),
+        learner: "独立思考并说出初步判断。",
+        time: 5,
+      },
+      {
+        type: "讲解",
+        stage: "讲解",
+        title: `${title}：抓住这些要点`,
+        onScreen: contents,
+        visual: "把知识点整理成清单或流程图；每个要点只保留关键词，旁边配一个简洁例子。",
+        speaker: String(activity.explain || "围绕关键问题讲清最少必要的概念、规则、步骤和判断依据。"),
+        learner: "记录关键要点，并对照自己的工作场景。",
+        time: Number(module.time || 20) > 35 ? 10 : 7,
+      },
+      {
+        type: absorbType,
+        stage: "吸收",
+        title: `完成产出：${output}`,
+        onScreen: ["任务", activityName, "产出", output, "按标准自查"],
+        visual: "左侧显示任务步骤，右侧显示学员产出模板；底部放评价标准，不把答案一次性铺满。",
+        speaker: String(activity.absorb || "布置一个必须有产出的练习，并用清晰标准组织自查、互查和讲师点评。"),
+        learner: `完成“${output}”，并根据标准修正。`,
+        time: Number(module.time || 20) > 35 ? 12 : 7,
+      },
+    );
+  });
+
+  slides.push(
+    {
+      type: "总结",
+      stage: "总结",
+      title: "一张图带走全课",
+      onScreen: ["关键问题", "核心方法", "典型场景", "岗位行动"],
+      visual: "用知识地图把各章串联起来，中心放课程主题，四周连接关键问题、方法、场景和行动。",
+      speaker: "用提问方式让学员补全知识地图，不重新讲一遍。",
+      learner: "回忆并说出全课最重要的三个收获。",
+      time: 5,
+    },
+    {
+      type: "收尾",
+      stage: "结束",
+      title: "从明天开始，改变一个动作",
+      onScreen: ["我最需要警惕的场景是……", "我要停止的一个动作是……", "我要开始坚持的一个动作是……"],
+      visual: "留白为主的行动卡页面，底部用细线连接“今天学习”和“明天行动”。",
+      speaker: "请学员完成个人行动卡，可邀请自愿分享，并说明后续资料或提醒安排。",
+      learner: "写下一个可执行的岗位行动。",
+      time: 4,
+    },
+  );
+
+  return { slides: slides.map((slide, index) => ({ ...slide, id: `slide-${index + 1}` })) };
 }
 
 function mockResponse(action: string, course: LooseCourse, message: string) {
@@ -169,7 +261,7 @@ function mockResponse(action: string, course: LooseCourse, message: string) {
   if (action === "goals") return mockGoals(course);
   if (action === "outline") return mockOutline(course);
   if (action === "activities") return mockActivities(course);
-  if (action === "storyboard") return mockStoryboard(course);
+  if (action === "storyboard") return buildStoryboard(course);
   return { error: "未知生成任务" };
 }
 
@@ -218,6 +310,16 @@ function providerErrorMessage(status: number, detail: string) {
   return `模型接口返回 ${status}${safeDetail ? `：${safeDetail}` : ""}`;
 }
 
+type ChatMessage = {
+  content?: string | Array<{ text?: string; type?: string }>;
+};
+
+function readMessageContent(message?: ChatMessage) {
+  if (!message?.content) return "";
+  if (typeof message.content === "string") return message.content.trim();
+  return message.content.map((part) => part.text || "").join("").trim();
+}
+
 function outputSchema(action: string) {
   if (action === "intake") return {
     message: "给用户的简短回复",
@@ -242,7 +344,10 @@ function assertExpectedResult(action: string, result: Record<string, unknown>) {
 async function requestModel(params: { apiKey: string; baseUrl: string; model: string; action: string; message: string; course: LooseCourse }) {
   const endpoint = resolveEndpoint(params.baseUrl);
   const isMiniMax = new URL(endpoint).hostname.includes("minimax");
+  const isMiniMaxM3 = isMiniMax && params.model.toLowerCase().includes("m3");
   const testing = params.action === "test";
+
+  if (params.action === "storyboard") return buildStoryboard(params.course);
 
   async function complete(userPayload: string, maxTokens: number) {
     const requestBody: Record<string, unknown> = {
@@ -253,8 +358,8 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
       ],
     };
     if (isMiniMax) {
-      requestBody.temperature = 1;
-      requestBody.reasoning_split = true;
+      requestBody.temperature = 0.3;
+      if (isMiniMaxM3) requestBody.thinking = { type: "disabled" };
       requestBody.max_completion_tokens = Math.min(maxTokens, 2048);
     } else {
       requestBody.temperature = 0.35;
@@ -269,10 +374,11 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
       const detail = await response.text();
       throw new Error(providerErrorMessage(response.status, detail));
     }
-    const result = await response.json() as { choices?: Array<{ finish_reason?: string; message?: { content?: string } }> };
+    const result = await response.json() as { choices?: Array<{ finish_reason?: string; message?: ChatMessage }> };
     const choice = result.choices?.[0];
-    if (!choice?.message?.content) throw new Error("模型没有返回内容");
-    return { content: choice.message.content, finishReason: choice.finish_reason || "" };
+    const content = readMessageContent(choice?.message);
+    if (!content) throw new Error("模型没有返回内容");
+    return { content, finishReason: choice?.finish_reason || "" };
   }
 
   async function generateJson(userPayload: string, action: string, maxTokens: number) {
@@ -296,45 +402,6 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
   }
 
   if (testing) return generateJson("请只返回这个JSON对象，不要添加解释：{\"ok\":true}", "test", 80);
-
-  if (params.action === "storyboard") {
-    const modules = params.course.modules?.length ? params.course.modules : [{ id: "module-1", title: clean(params.course.brief?.topic) || "课程核心内容" }];
-    const directory = modules.map((module, index) => `${index + 1}. ${String(module.title || `模块${index + 1}`)}`);
-    const briefCourse = { brief: params.course.brief, goals: params.course.goals, mainline: params.course.mainline, courseType: params.course.courseType };
-    const parts: Array<{ instruction: string; course: Record<string, unknown> }> = [
-      {
-        instruction: "只生成2页：封面、目录。目录必须列出全部模块。",
-        course: { ...briefCourse, modules },
-      },
-      ...modules.map((module, index) => ({
-        instruction: `只生成当前第${index + 1}章的5页：章封面、小节封面、激活、讲解、吸收。章封面显示完整目录并突出当前章。吸收页从思考、练习、实践中选择最合适的类型。每个文字字段保持简洁。`,
-        course: {
-          ...briefCourse,
-          modules: [module],
-          activities: (params.course.activities || []).filter((activity) => String((activity as Record<string, unknown>).module || "") === String(module.title || "")),
-        },
-      })),
-      {
-        instruction: "只生成2页：全课总结、收尾。总结形成知识地图或行动清单，收尾明确岗位行动。",
-        course: { ...briefCourse, modules },
-      },
-    ];
-    const partResults = await Promise.all(parts.map((part) => {
-      const payload = JSON.stringify({
-        action: "storyboard",
-        message: params.message,
-        course: part.course,
-        fullDirectory: directory,
-        batchInstruction: part.instruction,
-        outputSchema: outputSchema("storyboard"),
-        outputRules: "必须严格使用outputSchema中的英文键名；顶层只能有slides；严格按batchInstruction控制页数；onScreen不超过5行；visual、speaker、learner各不超过80个汉字；只输出一个完整有效的JSON对象。",
-      });
-      return generateJson(payload, "storyboard", 2048);
-    }));
-    const slides = partResults.flatMap((result) => Array.isArray(result.slides) ? result.slides : []);
-    if (!slides.length) throw new Error("模型没有生成PPT页面");
-    return { slides: slides.map((slide, index) => ({ ...(slide as Record<string, unknown>), id: `slide-${index + 1}` })) };
-  }
 
   const userPayload = JSON.stringify({
     action: params.action,
@@ -382,11 +449,13 @@ export async function POST(request: Request) {
   try {
     const result = await requestModel({ apiKey, baseUrl, model, action, message, course });
     if (action === "test") return NextResponse.json({ ok: true, mode: "ai", model });
-    return NextResponse.json({ ...result, mode: "ai" });
+    return NextResponse.json({ ...result, mode: action === "storyboard" ? "structured" : "ai" });
   } catch (error) {
-    if (runtimeConfig || action === "test") {
+    if (action === "test") {
       return NextResponse.json({ error: error instanceof Error ? error.message : "模型连接失败" }, { status: 502 });
     }
-    return NextResponse.json({ ...mockResponse(action, course, message), mode: "fallback" });
+    const fallback = mockResponse(action, course, message);
+    const warning = runtimeConfig ? "模型暂时没有返回有效内容，已先按内置课程方法生成可编辑初稿。" : undefined;
+    return NextResponse.json({ ...fallback, mode: "fallback", warning });
   }
 }

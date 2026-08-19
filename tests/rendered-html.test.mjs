@@ -56,7 +56,8 @@ test("keeps the course method and server-side model configuration explicit", asy
   assert.match(route, /runtimeConfig/);
   assert.match(route, /api\.minimaxi\.com/);
   assert.match(route, /max_completion_tokens/);
-  assert.match(route, /Promise\.all\(parts/);
+  assert.match(route, /thinking/);
+  assert.match(route, /buildStoryboard/);
   assert.match(route, /系统已自动重试/);
   assert.match(envExample, /^LLM_API_KEY=$/m);
   assert.doesNotMatch(envExample, /sk-|YOUR_API_KEY/);
@@ -90,4 +91,25 @@ test("generates goals and a page-by-page PPT plan in demo mode", async () => {
   assert.ok(slides.slides.some((slide) => slide.type === "章封面"));
   assert.ok(slides.slides.some((slide) => slide.type === "吸收·实践"));
   assert.ok(slides.slides.some((slide) => slide.type === "收尾"));
+});
+
+test("generates the PPT storyboard without waiting on the model", async () => {
+  const course = {
+    brief: { topic: "信息保密", audience: "全体员工", duration: "2小时", format: "线下" },
+    modules: [
+      { id: "module-1", title: "边界：什么信息需要保密", question: "哪些信息不能凭感觉处理？", contents: ["保密信息范围", "分类分级依据"], time: 25, activity: "信息卡片分类", output: "识别清单" },
+      { id: "module-2", title: "场景：泄密风险藏在哪里", question: "哪些行为可能带来泄密？", contents: ["办公与会议", "邮件与即时通信"], time: 35, activity: "情境辨析", output: "风险判断记录" },
+    ],
+  };
+  const response = await callApi({
+    action: "storyboard",
+    course,
+    runtimeConfig: { apiKey: "local-test-key", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" },
+  });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.mode, "structured");
+  assert.equal(result.slides.length, 14);
+  assert.ok(result.slides.some((slide) => slide.title.includes("边界")));
+  assert.ok(result.slides.some((slide) => slide.type === "吸收·实践"));
 });

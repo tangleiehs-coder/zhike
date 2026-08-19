@@ -215,6 +215,7 @@ export default function Home() {
       });
       const data = await response.json() as Record<string, unknown> & { error?: string };
       if (!response.ok) throw new Error(data.error || "生成失败");
+      if (typeof data.warning === "string") setNotice(data.warning);
       return data;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "暂时无法生成，请稍后重试。");
