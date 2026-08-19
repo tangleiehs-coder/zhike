@@ -55,6 +55,9 @@ test("keeps the course method and server-side model configuration explicit", asy
   assert.match(route, /业务问题和培训边界/);
   assert.match(route, /runtimeConfig/);
   assert.match(route, /api\.minimaxi\.com/);
+  assert.match(route, /max_completion_tokens/);
+  assert.match(route, /Promise\.all\(parts/);
+  assert.match(route, /系统已自动重试/);
   assert.match(envExample, /^LLM_API_KEY=$/m);
   assert.doesNotMatch(envExample, /sk-|YOUR_API_KEY/);
 });

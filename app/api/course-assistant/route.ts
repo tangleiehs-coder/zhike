@@ -187,14 +187,15 @@ function compactCourse(course: LooseCourse) {
 function parseJson(text: string) {
   const withoutThinking = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
   const cleaned = withoutThinking.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  try {
-    return JSON.parse(cleaned) as Record<string, unknown>;
-  } catch {
-    const start = cleaned.indexOf("{");
-    const end = cleaned.lastIndexOf("}");
-    if (start < 0 || end <= start) throw new Error("模型返回的内容不是有效 JSON");
-    return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+  const candidates = [cleaned];
+  const start = cleaned.indexOf("{");
+  const end = cleaned.lastIndexOf("}");
+  if (start >= 0 && end > start) candidates.push(cleaned.slice(start, end + 1));
+  for (const candidate of candidates) {
+    try { return JSON.parse(candidate) as Record<string, unknown>; } catch { /* 尝试常见尾逗号修复 */ }
+    try { return JSON.parse(candidate.replace(/,\s*([}\]])/g, "$1")) as Record<string, unknown>; } catch { /* 交由自动重试 */ }
   }
+  throw new Error("模型返回的 JSON 不完整");
 }
 
 function resolveEndpoint(baseUrl: string) {
@@ -242,44 +243,107 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
   const endpoint = resolveEndpoint(params.baseUrl);
   const isMiniMax = new URL(endpoint).hostname.includes("minimax");
   const testing = params.action === "test";
-  const userPayload = testing
-    ? "请只返回这个JSON对象，不要添加解释：{\"ok\":true}"
-    : JSON.stringify({
-      action: params.action,
-      message: params.message,
-      course: compactCourse(params.course),
-      outputSchema: outputSchema(params.action),
-      outputRules: "必须严格使用outputSchema中的英文键名；不要增加顶层字段；数组可以增加条目；只输出一个有效JSON对象。",
+
+  async function complete(userPayload: string, maxTokens: number) {
+    const requestBody: Record<string, unknown> = {
+      model: params.model,
+      messages: [
+        { role: "system", content: testing ? "你是接口连通性测试助手，只输出有效JSON。" : SYSTEM_PROMPT },
+        { role: "user", content: userPayload },
+      ],
+    };
+    if (isMiniMax) {
+      requestBody.temperature = 1;
+      requestBody.reasoning_split = true;
+      requestBody.max_completion_tokens = Math.min(maxTokens, 2048);
+    } else {
+      requestBody.temperature = 0.35;
+      requestBody.max_tokens = maxTokens;
+    }
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.apiKey}` },
+      body: JSON.stringify(requestBody),
     });
-  const requestBody: Record<string, unknown> = {
-    model: params.model,
-    messages: [
-      { role: "system", content: testing ? "你是接口连通性测试助手，只输出有效JSON。" : SYSTEM_PROMPT },
-      { role: "user", content: userPayload },
-    ],
-    max_tokens: testing ? 80 : params.action === "storyboard" ? 10000 : 5000,
-  };
-  if (isMiniMax) {
-    requestBody.temperature = 1;
-    requestBody.reasoning_split = true;
-  } else {
-    requestBody.temperature = 0.35;
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(providerErrorMessage(response.status, detail));
+    }
+    const result = await response.json() as { choices?: Array<{ finish_reason?: string; message?: { content?: string } }> };
+    const choice = result.choices?.[0];
+    if (!choice?.message?.content) throw new Error("模型没有返回内容");
+    return { content: choice.message.content, finishReason: choice.finish_reason || "" };
   }
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${params.apiKey}` },
-    body: JSON.stringify(requestBody),
+
+  async function generateJson(userPayload: string, action: string, maxTokens: number) {
+    let lastError = "模型返回内容不完整";
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const retryNote = attempt
+        ? "\n上一次输出被截断或JSON格式不正确。本次务必缩短文字、正确转义引号，并完整闭合所有数组和对象。只输出JSON。"
+        : "";
+      try {
+        const completion = await complete(`${userPayload}${retryNote}`, maxTokens);
+        if (completion.finishReason === "length") throw new Error("模型输出达到长度上限");
+        const parsed = parseJson(completion.content);
+        assertExpectedResult(action, parsed);
+        return parsed;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : lastError;
+        if (/模型接口返回/.test(lastError)) throw error;
+      }
+    }
+    throw new Error(`${lastError}。系统已自动重试，请再试一次或换用输出上限更高的模型。`);
+  }
+
+  if (testing) return generateJson("请只返回这个JSON对象，不要添加解释：{\"ok\":true}", "test", 80);
+
+  if (params.action === "storyboard") {
+    const modules = params.course.modules?.length ? params.course.modules : [{ id: "module-1", title: clean(params.course.brief?.topic) || "课程核心内容" }];
+    const directory = modules.map((module, index) => `${index + 1}. ${String(module.title || `模块${index + 1}`)}`);
+    const briefCourse = { brief: params.course.brief, goals: params.course.goals, mainline: params.course.mainline, courseType: params.course.courseType };
+    const parts: Array<{ instruction: string; course: Record<string, unknown> }> = [
+      {
+        instruction: "只生成2页：封面、目录。目录必须列出全部模块。",
+        course: { ...briefCourse, modules },
+      },
+      ...modules.map((module, index) => ({
+        instruction: `只生成当前第${index + 1}章的5页：章封面、小节封面、激活、讲解、吸收。章封面显示完整目录并突出当前章。吸收页从思考、练习、实践中选择最合适的类型。每个文字字段保持简洁。`,
+        course: {
+          ...briefCourse,
+          modules: [module],
+          activities: (params.course.activities || []).filter((activity) => String((activity as Record<string, unknown>).module || "") === String(module.title || "")),
+        },
+      })),
+      {
+        instruction: "只生成2页：全课总结、收尾。总结形成知识地图或行动清单，收尾明确岗位行动。",
+        course: { ...briefCourse, modules },
+      },
+    ];
+    const partResults = await Promise.all(parts.map((part) => {
+      const payload = JSON.stringify({
+        action: "storyboard",
+        message: params.message,
+        course: part.course,
+        fullDirectory: directory,
+        batchInstruction: part.instruction,
+        outputSchema: outputSchema("storyboard"),
+        outputRules: "必须严格使用outputSchema中的英文键名；顶层只能有slides；严格按batchInstruction控制页数；onScreen不超过5行；visual、speaker、learner各不超过80个汉字；只输出一个完整有效的JSON对象。",
+      });
+      return generateJson(payload, "storyboard", 2048);
+    }));
+    const slides = partResults.flatMap((result) => Array.isArray(result.slides) ? result.slides : []);
+    if (!slides.length) throw new Error("模型没有生成PPT页面");
+    return { slides: slides.map((slide, index) => ({ ...(slide as Record<string, unknown>), id: `slide-${index + 1}` })) };
+  }
+
+  const userPayload = JSON.stringify({
+    action: params.action,
+    message: params.message,
+    course: compactCourse(params.course),
+    outputSchema: outputSchema(params.action),
+    outputRules: "必须严格使用outputSchema中的英文键名；不要增加顶层字段；数组可以增加条目；每个文字字段保持简洁；只输出一个完整有效的JSON对象。",
   });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(providerErrorMessage(response.status, detail));
-  }
-  const result = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const content = result.choices?.[0]?.message?.content;
-  if (!content) throw new Error("模型没有返回内容");
-  const parsed = parseJson(content);
-  if (!testing) assertExpectedResult(params.action, parsed);
-  return parsed;
+  return generateJson(userPayload, params.action, 2048);
 }
 
 export async function GET() {
