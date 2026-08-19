@@ -37,7 +37,21 @@ test("server-renders the Zhike course design workbench", async () => {
   assert.match(html, /先把任务交给我/);
   assert.match(html, /课程任务卡/);
   assert.match(html, /PPT逐页方案/);
+  assert.match(html, /请使用电脑打开/);
+  assert.match(html, /zhike\.i530\.vip/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/i);
+});
+
+test("shows a stable desktop-use guide on mobile screens", async () => {
+  const [page, css] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
+  ]);
+  assert.match(page, /mobile-gate/);
+  assert.match(page, /为了保证使用体验，知课暂时只在电脑端提供完整功能/);
+  assert.match(css, /@media \(max-width:899px\)/);
+  assert.match(css, /\.app-shell,\.model-overlay \{ display:none!important; \}/);
+  assert.match(css, /\.mobile-gate \{ min-height:100svh; display:grid/);
 });
 
 test("keeps the course method and server-side model configuration explicit", async () => {

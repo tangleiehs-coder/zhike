@@ -685,7 +685,19 @@ export default function Home() {
   }
 
   return (
-    <main className="app-shell">
+    <>
+      <section className="mobile-gate" aria-labelledby="mobile-gate-title">
+        <div className="mobile-gate-card">
+          <div className="mobile-gate-brand"><span>知课</span><strong>AI企业课程设计助手</strong></div>
+          <div className="mobile-device" aria-hidden="true"><i /><b>大屏编辑</b><em /></div>
+          <p className="mobile-kicker">DESKTOP EXPERIENCE</p>
+          <h1 id="mobile-gate-title">请使用电脑打开</h1>
+          <p className="mobile-gate-copy">课程目标、课程结构、教学活动和PPT逐页方案需要在较大屏幕上阅读与编辑。为了保证使用体验，知课暂时只在电脑端提供完整功能。</p>
+          <div className="mobile-address"><span>在电脑浏览器中输入</span><strong>zhike.i530.vip</strong></div>
+          <p className="mobile-gate-tip">建议使用最新版 Chrome、Edge 或 Safari 浏览器</p>
+        </div>
+      </section>
+      <main className="app-shell">
       <input ref={fileRef} className="visually-hidden" type="file" multiple accept=".txt,.md,.csv,.json,.pdf,.doc,.docx,.ppt,.pptx" onChange={(event) => void addFiles(event.target.files)} />
       <aside className="sidebar">
         <div className="brand"><span className="brand-mark">知课</span><span><strong>课程设计助手</strong><small>AI COURSE STUDIO</small></span></div>
@@ -720,6 +732,7 @@ export default function Home() {
           <footer><button className="clear-model" type="button" onClick={clearModelConfig}>清除设置</button><div><button type="button" onClick={() => setShowModelSettings(false)}>取消</button><button className="primary" type="button" disabled={modelStatus === "testing"} onClick={() => void testModelConnection()}>{modelStatus === "testing" ? "正在测试…" : "测试并使用"}</button></div></footer>
         </section>
       </div>}
-    </main>
+      </main>
+    </>
   );
 }
