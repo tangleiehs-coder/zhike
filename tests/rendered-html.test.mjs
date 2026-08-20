@@ -1,31 +1,63 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import { fileURLToPath } from "node:url";
+import net from "node:net";
+import test, { after, before } from "node:test";
+
+const projectRoot = fileURLToPath(new URL("..", import.meta.url));
+let server;
+let baseUrl;
+
+async function availablePort() {
+  return await new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      probe.close((error) => error ? reject(error) : resolve(port));
+    });
+  });
+}
+
+before(async () => {
+  const port = await availablePort();
+  baseUrl = `http://127.0.0.1:${port}`;
+  const nextBin = fileURLToPath(new URL("../node_modules/next/dist/bin/next", import.meta.url));
+  const logs = [];
+  server = spawn(process.execPath, [nextBin, "start", "--hostname", "127.0.0.1", "--port", String(port)], {
+    cwd: projectRoot,
+    env: { ...process.env, NODE_ENV: "production", LLM_API_KEY: "", LLM_BASE_URL: "", LLM_MODEL: "" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  server.stdout.on("data", (chunk) => logs.push(chunk.toString()));
+  server.stderr.on("data", (chunk) => logs.push(chunk.toString()));
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    if (server.exitCode !== null) throw new Error(`Next.js 测试服务启动失败：${logs.join("")}`);
+    try {
+      const response = await fetch(baseUrl);
+      if (response.ok) return;
+    } catch { /* 等待服务就绪 */ }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Next.js 测试服务启动超时：${logs.join("")}`);
+}, { timeout: 30000 });
+
+after(() => {
+  server?.kill("SIGTERM");
+});
 
 async function render() {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-  return worker.fetch(
-    new Request("http://localhost/", { headers: { accept: "text/html" } }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
+  return fetch(`${baseUrl}/`, { headers: { accept: "text/html" } });
 }
 
 async function callApi(body) {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("api-test", `${process.pid}-${Date.now()}-${Math.random()}`);
-  const { default: worker } = await import(workerUrl.href);
-  return worker.fetch(
-    new Request("http://localhost/api/course-assistant", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }),
-    { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
-    { waitUntil() {}, passThroughOnException() {} },
-  );
+  return fetch(`${baseUrl}/api/course-assistant`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 }
 
 test("server-renders the Zhike course design workbench", async () => {
@@ -73,6 +105,8 @@ test("keeps the course method and server-side model configuration explicit", asy
   assert.match(route, /业务问题和培训边界/);
   assert.match(route, /runtimeConfig/);
   assert.match(route, /api\.minimaxi\.com/);
+  assert.match(route, /api\.deepseek\.com/);
+  assert.match(route, /dashscope\.aliyuncs\.com/);
   assert.match(route, /max_completion_tokens/);
   assert.match(route, /thinking/);
   assert.match(route, /buildStoryboard/);

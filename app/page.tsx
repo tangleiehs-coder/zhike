@@ -100,7 +100,9 @@ const landingOptions: { key: LandingKey; title: string; verb: string; note: stri
 const MODEL_STORAGE_KEY = "zhike-model-config-v1";
 const modelPresets = [
   { id: "minimax-cn", label: "MiniMax 国内", baseUrl: "https://api.minimaxi.com/v1", model: "MiniMax-M3" },
-  { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
+  { id: "deepseek-cn", label: "DeepSeek 国内", baseUrl: "https://api.deepseek.com", model: "deepseek-v4-flash" },
+  { id: "qwen-cn", label: "通义千问 国内", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
+  { id: "openai", label: "OpenAI 境外", baseUrl: "https://api.openai.com/v1", model: "gpt-4.1-mini" },
   { id: "custom", label: "其他兼容接口", baseUrl: "", model: "" },
 ];
 

@@ -139,7 +139,7 @@ function stringList(value: unknown, fallback: string[] = []) {
   return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : fallback;
 }
 
-function buildStoryboard(course: LooseCourse) {
+function buildStoryboard(course: LooseCourse): { slides: Array<Record<string, unknown>> } {
   const topic = clean(course.brief?.topic) || extractTopic(course.rawTask || "") || "课程主题";
   const audience = clean(course.brief?.audience) || "参训学员";
   const modules = course.modules?.length ? course.modules : (mockOutline(course).modules as Array<Record<string, unknown>>);
@@ -347,6 +347,8 @@ function resolveEndpoint(baseUrl: string) {
   const allowedHosts = new Set([
     "api.minimaxi.com",
     "api.minimax.io",
+    "api.deepseek.com",
+    "dashscope.aliyuncs.com",
     "api.openai.com",
     ...clean(process.env.LLM_ALLOWED_HOSTS).split(",").map((host) => host.trim().toLowerCase()).filter(Boolean),
   ]);
@@ -488,6 +490,7 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
   const endpoint = resolveEndpoint(params.baseUrl);
   const isMiniMax = new URL(endpoint).hostname.includes("minimax");
   const isMiniMaxM3 = isMiniMax && params.model.toLowerCase().includes("m3");
+  const isDeepSeek = new URL(endpoint).hostname === "api.deepseek.com";
   const testing = params.action === "test";
 
   if (params.action === "storyboard") return buildStoryboard(params.course);
@@ -509,6 +512,7 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
     } else {
       requestBody.temperature = 0.35;
       requestBody.max_tokens = maxTokens;
+      if (isDeepSeek) requestBody.thinking = { type: "disabled" };
     }
     const remaining = deadline - Date.now();
     if (remaining < 1500) throw new Error("模型响应超时");
