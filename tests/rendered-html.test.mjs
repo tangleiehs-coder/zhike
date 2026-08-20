@@ -101,6 +101,9 @@ test("keeps the course method and server-side model configuration explicit", asy
   assert.match(page, /模型设置/);
   assert.match(page, /在此浏览器记住设置/);
   assert.match(page, /zhike-model-config-v1/);
+  assert.match(page, /compactCourseForRequest/);
+  assert.match(page, /remaining = 18000/);
+  assert.match(page, /服务器连接刚才中断了/);
   assert.match(route, /ABCD目标/);
   assert.match(route, /业务问题和培训边界/);
   assert.match(route, /runtimeConfig/);

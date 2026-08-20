@@ -524,7 +524,7 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
 
   if (params.action === "storyboard") return buildStoryboard(params.course);
 
-  const deadline = Date.now() + 40000;
+  const deadline = Date.now() + 26000;
 
   async function complete(userPayload: string, maxTokens: number) {
     const requestBody: Record<string, unknown> = {
@@ -545,7 +545,7 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
     const remaining = deadline - Date.now();
     if (remaining < 1500) throw new Error("模型响应超时");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(28000, remaining));
+    const timer = setTimeout(() => controller.abort(), Math.min(20000, remaining));
     let response: Response;
     try {
       response = await fetch(endpoint, {

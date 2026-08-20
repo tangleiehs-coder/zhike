@@ -168,6 +168,35 @@ function restoreCourse(saved: string): CourseState {
   };
 }
 
+function compactCourseForRequest(action: string, course: CourseState) {
+  const common = {
+    rawTask: course.rawTask,
+    brief: course.brief,
+    courseType: course.courseType,
+    mainline: course.mainline,
+  };
+  if (action === "intake") return {
+    ...common,
+    messages: course.messages.slice(-6),
+    attachments: course.attachments.slice(0, 10).map(({ id, name, size, type }) => ({ id, name, size, type })),
+  };
+  if (action === "goals") return { ...common, landing: course.landing, outcomeNote: course.outcomeNote };
+  if (action === "outline") {
+    let remaining = 18000;
+    const attachments = course.attachments.slice(0, 6).map((file) => {
+      const text = (file.text || "").slice(0, Math.min(6000, remaining));
+      remaining -= text.length;
+      return { id: file.id, name: file.name, size: file.size, type: file.type, text };
+    });
+    return { ...common, goals: course.goals, attachments };
+  }
+  if (action === "activities") return { ...common, goals: course.goals, modules: course.modules };
+  if (action === "storyboard" || action === "storyboard-section") {
+    return { ...common, goals: course.goals, modules: course.modules, activities: course.activities };
+  }
+  return common;
+}
+
 export default function Home() {
   const [course, setCourse] = useState<CourseState>(initialState);
   const [draft, setDraft] = useState("");
@@ -254,12 +283,12 @@ export default function Home() {
   async function requestAI(action: string, extra: Record<string, unknown> = {}, snapshot: CourseState = course) {
     setNotice("");
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 55000);
+    const timer = window.setTimeout(() => controller.abort(), 35000);
     try {
       const response = await fetch("/api/course-assistant", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action, course: snapshot, ...extra, runtimeConfig: modelConfig.apiKey ? modelConfig : undefined }),
+        body: JSON.stringify({ action, course: compactCourseForRequest(action, snapshot), ...extra, runtimeConfig: modelConfig.apiKey ? modelConfig : undefined }),
         signal: controller.signal,
       });
       const data = await response.json() as Record<string, unknown> & { error?: string };
@@ -267,7 +296,12 @@ export default function Home() {
       if (typeof data.warning === "string") setNotice(data.warning);
       return data;
     } catch (error) {
-      setNotice(error instanceof Error && error.name === "AbortError" ? "本次请求等待过久，已安全停止。当前草稿没有丢失，可以重新生成这一步。" : error instanceof Error ? error.message : "暂时无法生成，请稍后重试。");
+      const message = error instanceof Error ? error.message : "";
+      setNotice(error instanceof Error && error.name === "AbortError"
+        ? "本次请求等待过久，已安全停止。当前草稿没有丢失，可以重新生成这一步。"
+        : /failed to fetch|networkerror|load failed/i.test(message)
+          ? "服务器连接刚才中断了，当前草稿没有丢失。系统已缩短单次生成并减少传输内容，请重新生成这一步。"
+          : message || "暂时无法生成，请稍后重试。");
       return null;
     } finally {
       window.clearTimeout(timer);
