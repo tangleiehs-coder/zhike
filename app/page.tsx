@@ -254,7 +254,7 @@ export default function Home() {
   async function requestAI(action: string, extra: Record<string, unknown> = {}, snapshot: CourseState = course) {
     setNotice("");
     const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 45000);
+    const timer = window.setTimeout(() => controller.abort(), 55000);
     try {
       const response = await fetch("/api/course-assistant", {
         method: "POST",

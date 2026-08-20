@@ -365,6 +365,35 @@ function providerErrorMessage(status: number, detail: string) {
   return `模型接口返回 ${status}${safeDetail ? `：${safeDetail}` : ""}`;
 }
 
+function safeHost(url: string) {
+  try { return new URL(url).hostname || "unknown"; } catch { return "unknown"; }
+}
+
+function actionOutputRules(action: string) {
+  const common = "只完成当前action；confirmedContext是用户已经确认或手动修改后的唯一依据；必须严格使用outputSchema中的英文键名；不要增加顶层字段；只输出一个完整有效的JSON对象。";
+  if (action === "outline") return `${common} 生成3—6个课程模块；每个模块只写2—5个核心知识点；标题、核心问题、活动和产出都要简洁；模块总时长尽量与课程时长一致。`;
+  if (action === "activities") return `${common} 每个课程模块对应1项活动设计；激活、讲解、吸收、反馈和材料均控制在必要长度，不复述课程目标。`;
+  if (action === "storyboard-section") return `${common} 只生成目标模块的5个页面；屏上文字使用短句，讲师提示不超过必要长度。`;
+  return `${common} 每个文字字段保持简洁。`;
+}
+
+function fallbackWarning(action: string, error: unknown) {
+  const stageName: Record<string, string> = {
+    intake: "课程任务",
+    goals: "课程目标",
+    outline: "内容与结构",
+    activities: "教学活动",
+    "storyboard-section": "PPT章节",
+  };
+  const detail = error instanceof Error ? error.message : "模型返回内容不完整";
+  let reason = "模型返回的结构化内容不完整";
+  if (/超时|AbortError/i.test(detail)) reason = "等待模型响应超时";
+  else if (/达到长度上限|length|截断/i.test(detail)) reason = "模型输出达到长度上限";
+  else if (/模型接口返回\s+\d+/.test(detail)) reason = detail.match(/模型接口返回\s+\d+/)?.[0] || "模型接口暂时不可用";
+  else if (/没有返回内容|为空/.test(detail)) reason = "模型没有返回完整内容";
+  return `AI 在“${stageName[action] || "当前"}”这一步未能完成生成（${reason}），已保留一份可编辑初稿。你可以直接修改，也可以点击重新生成。`;
+}
+
 type ChatMessage = {
   content?: string | Array<{ text?: string; type?: string }>;
 };
@@ -488,14 +517,14 @@ function assertExpectedResult(action: string, result: Record<string, unknown>) {
 
 async function requestModel(params: { apiKey: string; baseUrl: string; model: string; action: string; message: string; moduleId: string; course: LooseCourse }) {
   const endpoint = resolveEndpoint(params.baseUrl);
-  const isMiniMax = new URL(endpoint).hostname.includes("minimax");
-  const isMiniMaxM3 = isMiniMax && params.model.toLowerCase().includes("m3");
-  const isDeepSeek = new URL(endpoint).hostname === "api.deepseek.com";
+  const endpointHost = new URL(endpoint).hostname;
+  const isMiniMax = endpointHost.includes("minimax");
+  const supportsJsonObject = ["api.deepseek.com", "dashscope.aliyuncs.com", "api.openai.com"].includes(endpointHost);
   const testing = params.action === "test";
 
   if (params.action === "storyboard") return buildStoryboard(params.course);
 
-  const deadline = Date.now() + 24000;
+  const deadline = Date.now() + 40000;
 
   async function complete(userPayload: string, maxTokens: number) {
     const requestBody: Record<string, unknown> = {
@@ -507,17 +536,16 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
     };
     if (isMiniMax) {
       requestBody.temperature = 0.3;
-      if (isMiniMaxM3) requestBody.thinking = { type: "disabled" };
       requestBody.max_completion_tokens = Math.min(maxTokens, 2048);
     } else {
       requestBody.temperature = 0.35;
       requestBody.max_tokens = maxTokens;
-      if (isDeepSeek) requestBody.thinking = { type: "disabled" };
+      if (supportsJsonObject) requestBody.response_format = { type: "json_object" };
     }
     const remaining = deadline - Date.now();
     if (remaining < 1500) throw new Error("模型响应超时");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(18000, remaining));
+    const timer = setTimeout(() => controller.abort(), Math.min(28000, remaining));
     let response: Response;
     try {
       response = await fetch(endpoint, {
@@ -548,7 +576,7 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
     for (let attempt = 0; attempt < 2; attempt += 1) {
       if (attempt > 0 && deadline - Date.now() < 4500) break;
       const retryNote = attempt
-        ? "\n上一次输出被截断或JSON格式不正确。本次务必缩短文字、正确转义引号，并完整闭合所有数组和对象。只输出JSON。"
+        ? "\n上一次输出被截断或JSON格式不正确。本次请重新生成更短的版本：减少解释性文字，正确转义引号，完整闭合所有数组和对象，只输出JSON。"
         : "";
       try {
         const completion = await complete(`${userPayload}${retryNote}`, maxTokens);
@@ -566,13 +594,13 @@ async function requestModel(params: { apiKey: string; baseUrl: string; model: st
 
   if (testing) return generateJson("请只返回这个JSON对象，不要添加解释：{\"ok\":true}", "test", 80);
 
-  const tokenBudget: Record<string, number> = { intake: 650, goals: 1100, outline: 1500, activities: 1700, "storyboard-section": 1700 };
+  const tokenBudget: Record<string, number> = { intake: 700, goals: 1200, outline: 2048, activities: 2048, "storyboard-section": 2048 };
   const userPayload = JSON.stringify({
     action: params.action,
     message: params.message,
     confirmedContext: stageContext(params.action, params.course, params.message, params.moduleId),
     outputSchema: outputSchema(params.action),
-    outputRules: "只完成当前action；confirmedContext是用户已经确认或手动修改后的唯一依据；必须严格使用outputSchema中的英文键名；不要增加顶层字段；每个文字字段保持简洁；只输出一个完整有效的JSON对象。",
+    outputRules: actionOutputRules(params.action),
   });
   return generateJson(userPayload, params.action, tokenBudget[params.action] || 1200);
 }
@@ -624,7 +652,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error instanceof Error ? error.message : "模型连接失败" }, { status: 502 });
     }
     const fallback = mockResponse(action, course, message, moduleId);
-    const warning = runtimeConfig ? "模型暂时没有返回有效内容，已先按内置课程方法生成可编辑初稿。" : undefined;
+    const warning = runtimeConfig ? fallbackWarning(action, error) : undefined;
+    console.warn("course-assistant fallback", {
+      action,
+      provider: safeHost(baseUrl),
+      model,
+      reason: error instanceof Error ? error.message.slice(0, 240) : "unknown",
+    });
     return NextResponse.json({ ...fallback, mode: "fallback", warning });
   }
 }

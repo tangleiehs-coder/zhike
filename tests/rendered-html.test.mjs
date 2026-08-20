@@ -108,7 +108,9 @@ test("keeps the course method and server-side model configuration explicit", asy
   assert.match(route, /api\.deepseek\.com/);
   assert.match(route, /dashscope\.aliyuncs\.com/);
   assert.match(route, /max_completion_tokens/);
-  assert.match(route, /thinking/);
+  assert.match(route, /response_format/);
+  assert.match(route, /supportsJsonObject/);
+  assert.match(route, /fallbackWarning/);
   assert.match(route, /buildStoryboard/);
   assert.match(route, /storyboard-section/);
   assert.match(route, /stageContext/);
